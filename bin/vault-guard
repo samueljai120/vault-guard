@@ -255,43 +255,42 @@ PYEOF
     run)
         [ $# -lt 2 ] && echo "Usage: vault-guard run <project> <command...>" && exit 1
         project="$1"; shift
-        service=$(get_service "$project")
-        # Load all keys for this project from Keychain into env
-        eval "$(python3 -c "
-import subprocess, json, os
+        # Pass all args to Python — no bash variable embedding into Python strings
+        exec python3 - "$CONFIG" "$project" "$@" <<'PYEOF'
+import subprocess, json, os, sys
 
-config_path = os.path.expanduser('$CONFIG')
-service = '$service'
+config_path = sys.argv[1]
+project     = sys.argv[2]
+cmd         = sys.argv[3:]
 
+if not cmd:
+    print("Usage: vault-guard run <project> <command...>", file=sys.stderr)
+    sys.exit(1)
+
+# Build env from Keychain
+env = dict(os.environ)
 try:
-    cfg = json.load(open(config_path))
-except:
-    exit(0)
+    cfg = json.load(open(os.path.expanduser(config_path)))
+    for p in cfg.get('projects', []):
+        if p.get('id') == project:
+            service  = p.get('keychain_service', project)
+            proj_dir = os.path.expanduser(p.get('dir', ''))
+            keys_file = os.path.join(proj_dir, '.env.keys') if proj_dir else ''
+            if keys_file and os.path.isfile(keys_file):
+                keys = [l.strip() for l in open(keys_file) if l.strip() and not l.startswith('#')]
+                for key in keys:
+                    r = subprocess.run(
+                        ['security', 'find-generic-password', '-s', service, '-a', key, '-w'],
+                        capture_output=True, text=True
+                    )
+                    if r.returncode == 0:
+                        env[key] = r.stdout.strip()
+            break
+except Exception as e:
+    print(f"vault-guard: warning: {e}", file=sys.stderr)
 
-# Find the project's .env.keys file for the key list
-proj_dir = ''
-for p in cfg.get('projects', []):
-    if p.get('keychain_service') == service or p.get('id') == '$project':
-        proj_dir = os.path.expanduser(p.get('dir', ''))
-        break
-
-keys_file = os.path.join(proj_dir, '.env.keys') if proj_dir else ''
-
-keys = []
-if keys_file and os.path.isfile(keys_file):
-    with open(keys_file) as f:
-        keys = [l.strip() for l in f if l.strip() and not l.startswith('#')]
-
-for key in keys:
-    r = subprocess.run(
-        ['security', 'find-generic-password', '-s', service, '-a', key, '-w'],
-        capture_output=True, text=True
-    )
-    if r.returncode == 0:
-        val = r.stdout.strip().replace(\"'\", \"'\\\\''\" )
-        print(f\"export {key}='{val}'\")
-")"
-        exec "$@"
+os.execvpe(cmd[0], cmd, env)
+PYEOF
         ;;
 
     init)

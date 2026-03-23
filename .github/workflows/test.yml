@@ -1,0 +1,59 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate shell syntax
+        run: |
+          bash -n install.sh && echo "OK: install.sh"
+          bash -n uninstall.sh && echo "OK: uninstall.sh"
+          for hook in hooks/*.sh; do bash -n "$hook" && echo "OK: $hook"; done
+          bash -n bin/vault-guard && echo "OK: bin/vault-guard"
+
+      - name: Check required files exist
+        run: |
+          for f in hooks/credential-scanner.sh hooks/auto-store-secrets.sh hooks/output-redactor.sh hooks/history-scrubber.sh bin/vault-guard install.sh uninstall.sh README.md LICENSE SECURITY.md; do
+            [ -f "$f" ] && echo "OK: $f" || { echo "MISSING: $f"; exit 1; }
+          done
+
+      - name: Test — normal message passes through (exit 0)
+        run: |
+          chmod +x hooks/credential-scanner.sh
+          code=$(printf '{"prompt":"help me sort a list in python"}' | bash hooks/credential-scanner.sh > /dev/null 2>&1; echo $?)
+          [ "$code" = "0" ] && echo "PASS" || { echo "FAIL: expected 0, got $code"; exit 1; }
+
+      - name: Test — KEY=value credential blocked (exit 2)
+        run: |
+          # Construct test value at runtime — avoid hardcoding credential-like strings in source
+          FAKE="$(python3 -c "print('sk' + '_live_' + 'A'*28)")"
+          code=$(printf "{\"prompt\":\"STRIPE_SECRET_KEY=$FAKE\"}" | bash hooks/credential-scanner.sh > /dev/null 2>&1; echo $?)
+          [ "$code" = "2" ] && echo "PASS" || { echo "FAIL: expected 2, got $code"; exit 1; }
+          security delete-generic-password -s "vault-guard" -a "STRIPE_SECRET_KEY" 2>/dev/null || true
+
+      - name: Test — multi-line real-newline JSON blocked (exit 2)
+        run: |
+          FAKE="$(python3 -c "print('sk' + '_live_' + 'A'*28)")"
+          code=$(printf "{\"prompt\":\"keys:\nSTRIPE_SECRET_KEY=$FAKE\"}" | bash hooks/credential-scanner.sh > /dev/null 2>&1; echo $?)
+          [ "$code" = "2" ] && echo "PASS" || { echo "FAIL: expected 2, got $code"; exit 1; }
+          security delete-generic-password -s "vault-guard" -a "STRIPE_SECRET_KEY" 2>/dev/null || true
+
+      - name: Test — placeholder not blocked (exit 0)
+        run: |
+          code=$(printf '{"prompt":"API_KEY=your_key_here"}' | bash hooks/credential-scanner.sh > /dev/null 2>&1; echo $?)
+          [ "$code" = "0" ] && echo "PASS" || { echo "FAIL: expected 0, got $code"; exit 1; }
+
+      - name: Test — vault-guard CLI
+        run: |
+          chmod +x bin/vault-guard
+          bash bin/vault-guard help | grep -q "COMMANDS:" && echo "PASS: help works"
+          bash bin/vault-guard status && echo "PASS: status works"

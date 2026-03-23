@@ -26,10 +26,10 @@ echo ""
 
 # ── 1. Remove hook files ──────────────────────────────────────────────────────
 VG_HOOKS=(
-  "vg_prompt_scan.py"
-  "vg_bash_guard.py"
-  "vg_write_intercept.py"
-  "vg_session_audit.py"
+  "credential-scanner.sh"
+  "auto-store-secrets.sh"
+  "output-redactor.sh"
+  "history-scrubber.sh"
 )
 
 REMOVED_HOOKS=0
@@ -38,29 +38,25 @@ for hook in "${VG_HOOKS[@]}"; do
   if [ -f "$target" ]; then
     rm -f "$target"
     echo -e "${GREEN}  [−] Removed $target${RESET}"
-    REMOVED_HOOKS=$((REMOVED_HOOKS + 1))
+    ((REMOVED_HOOKS++)) || true
   fi
 done
-if [ "$REMOVED_HOOKS" -eq 0 ]; then
-  echo -e "${CYAN}  [=] No hook files found to remove${RESET}"
-fi
+[ "$REMOVED_HOOKS" -eq 0 ] && echo -e "${CYAN}  [=] No hook files found to remove${RESET}"
 
 # ── 2. Remove hook entries from ~/.claude/settings.local.json ────────────────
 VG_COMMANDS=(
-  "python3 ~/.claude/hooks/vg_prompt_scan.py"
-  "python3 ~/.claude/hooks/vg_bash_guard.py"
-  "python3 ~/.claude/hooks/vg_write_intercept.py"
-  "python3 ~/.claude/hooks/vg_session_audit.py"
+  "bash $CLAUDE_HOOKS_DIR/credential-scanner.sh"
+  "bash $CLAUDE_HOOKS_DIR/auto-store-secrets.sh"
+  "bash $CLAUDE_HOOKS_DIR/output-redactor.sh"
+  "bash $CLAUDE_HOOKS_DIR/history-scrubber.sh"
 )
 
 if [ -f "$CLAUDE_SETTINGS" ]; then
-  # Build a JSON array of commands to remove
   CMD_LIST_JSON=$(printf '%s\n' "${VG_COMMANDS[@]}" | python3 -c "
 import sys, json
-cmds = [line.strip() for line in sys.stdin]
+cmds = [line.strip() for line in sys.stdin if line.strip()]
 print(json.dumps(cmds))
 ")
-
   python3 - "$CLAUDE_SETTINGS" "$CMD_LIST_JSON" <<'PYEOF'
 import sys, json
 
@@ -78,14 +74,9 @@ hooks = settings.get("hooks", {})
 def strip_vg_entries(entry_list):
     kept = []
     for entry in entry_list:
-        filtered_hooks = [
-            h for h in entry.get("hooks", [])
-            if h.get("command", "") not in remove_cmds
-        ]
-        if filtered_hooks:
-            new_entry = dict(entry)
-            new_entry["hooks"] = filtered_hooks
-            kept.append(new_entry)
+        filtered = [h for h in entry.get("hooks", []) if h.get("command", "") not in remove_cmds]
+        if filtered:
+            kept.append({**entry, "hooks": filtered})
     return kept
 
 for event in list(hooks.keys()):
@@ -102,27 +93,25 @@ with open(settings_path, "w") as f:
     json.dump(settings, f, indent=2)
     f.write("\n")
 PYEOF
-
   echo -e "${GREEN}  [−] Removed Vault Guard hook entries from $CLAUDE_SETTINGS${RESET}"
 else
   echo -e "${CYAN}  [=] $CLAUDE_SETTINGS not found — nothing to patch${RESET}"
 fi
 
-# ── 3. Remove bin/vg ─────────────────────────────────────────────────────────
-VG_BIN="$BIN_DIR/vg"
-if [ -f "$VG_BIN" ]; then
-  rm -f "$VG_BIN"
-  echo -e "${GREEN}  [−] Removed $VG_BIN${RESET}"
-else
-  echo -e "${CYAN}  [=] $VG_BIN not found — nothing to remove${RESET}"
-fi
+# ── 3. Remove bin commands ────────────────────────────────────────────────────
+for bin_cmd in vault-guard vg; do
+  target="$BIN_DIR/$bin_cmd"
+  if [ -f "$target" ] || [ -L "$target" ]; then
+    rm -f "$target"
+    echo -e "${GREEN}  [−] Removed $target${RESET}"
+  fi
+done
 
 # ── 4. Note about config ──────────────────────────────────────────────────────
 echo ""
 if [ -f "$VAULTGUARD_CONFIG" ]; then
   echo -e "${YELLOW}  [i] $VAULTGUARD_CONFIG was left intact.${RESET}"
-  echo -e "      Remove it manually if you no longer need it:"
-  echo -e "      rm $VAULTGUARD_CONFIG"
+  echo -e "      Remove manually if no longer needed: rm $VAULTGUARD_CONFIG"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────

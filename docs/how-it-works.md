@@ -1,228 +1,191 @@
 # How Vault Guard Works — Technical Deep-Dive
 
-CLS Vault Guard is a set of four Claude Code hooks written in Python. Each hook intercepts a specific event in the Claude Code execution lifecycle and scans the relevant content for credential patterns defined in `config/patterns.json`.
+CLS Vault Guard installs four **bash scripts** as Claude Code hooks. Each hook intercepts a specific event in the Claude Code session lifecycle, runs a Python detection pipeline inline, and stores detected credentials to macOS Keychain.
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
 Claude Code session
        │
-       ├── [UserPromptSubmit]   → vg_prompt_scan.py
+       ├── [UserPromptSubmit]    → credential-scanner.sh   (exits 2 to BLOCK)
        │
-       ├── [PostToolUse:Bash]   → vg_bash_guard.py
+       ├── [PostToolUse: Bash]   → output-redactor.sh      (exits 0, scrubs history)
        │
-       ├── [PostToolUse:Write]  → vg_write_intercept.py
-       ├── [PostToolUse:Edit]   → vg_write_intercept.py
+       ├── [PostToolUse: Write]  → auto-store-secrets.sh   (exits 0, redacts .env)
+       ├── [PostToolUse: Edit]   → auto-store-secrets.sh
        │
-       └── [Stop]               → vg_session_audit.py
+       └── [Stop]                → history-scrubber.sh     (exits 0, scrubs history.jsonl)
 ```
 
-Each hook:
-1. Reads its input from stdin (Claude Code passes the tool context as JSON)
-2. Loads `~/.vaultguard.json` for config
-3. Loads `config/patterns.json` for credential regex patterns
-4. Scans the relevant content
-5. Emits output to stdout (Claude Code reads this back as a tool result annotation)
-6. Optionally appends to `~/.vaultguard.log`
+Hooks are bash scripts installed to `~/.claude/hooks/`. Python code runs inline via heredoc (`python3 - args <<'PYEOF' ... PYEOF`) — there are no separate Python files.
 
 ---
 
-## Hook 1: `UserPromptSubmit` — Prompt Scanner
+## Detection pipeline
 
-**File:** `~/.claude/hooks/vg_prompt_scan.py`
+All four hooks share the same 4-step Python detection logic:
 
-**When it fires:** Before Claude processes any user message.
-
-**What it receives (stdin):**
-```json
-{
-  "session_id": "...",
-  "transcript_path": "...",
-  "prompt": "Here is my Stripe key: sk_live_51abc..."
-}
+### Step 1 — KEY=value parsing (highest priority)
+```python
+kv_re = re.compile(
+    r'^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=\s*["\']?([^\s"\'#\n]{8,})["\']?\s*$',
+    re.MULTILINE
+)
 ```
+Catches explicit `KEY=value` and `export KEY=value` syntax. The key name is used directly — no auto-naming needed.
 
-**What it does:**
-- Extracts the `prompt` field
-- Runs each enabled regex pattern against the raw text
-- If a match is found in `block` mode: exits with code `2`, causing Claude Code to surface a blocking warning to the user
-- If a match is found in `warn` mode: exits with code `0` but writes a warning annotation
-- Logs the event to `~/.vaultguard.log` if logging is enabled
+**Filters applied:** skips URL schemes (`postgres://`, `https://`, etc.), short numerics, placeholder values (`your_key_here`, `placeholder`, `stored-in-keychain`), and keys that start with `$`.
 
-**Why the prompt hook matters:**
-Users often paste credentials directly into the chat ("use this API key: sk_live_..."). Without this hook, Claude would receive the real key, potentially echo it back, use it in generated code, or include it in its context window.
-
----
-
-## Hook 2: `PostToolUse:Bash` — Shell Command Guard
-
-**File:** `~/.claude/hooks/vg_bash_guard.py`
-
-**When it fires:** After every `Bash` tool execution.
-
-**What it receives (stdin):**
-```json
-{
-  "session_id": "...",
-  "tool_name": "Bash",
-  "tool_input": {
-    "command": "export STRIPE_KEY=sk_live_51abc..."
-  },
-  "tool_response": {
-    "stdout": "",
-    "stderr": ""
-  }
-}
-```
-
-**What it does:**
-- Scans `tool_input.command` — catches keys hard-coded into shell commands
-- Scans `tool_response.stdout` and `tool_response.stderr` — catches keys echoed or printed by scripts
-- In `block` mode: writes a blocking annotation to stdout telling Claude to halt follow-up actions and redact the output
-- In `warn` mode: annotates the result with a warning but allows continuation
-
-**Common patterns caught:**
-- `export API_KEY=sk_live_...`
-- `curl -H "Authorization: Bearer sk-ant-..."`
-- Scripts that `echo` or `cat` credential files
-- `printenv | grep KEY` leaking keys to the terminal
-
----
-
-## Hook 3: `PostToolUse:Write|Edit` — File Write Interceptor
-
-**File:** `~/.claude/hooks/vg_write_intercept.py`
-
-**When it fires:** After every `Write` or `Edit` tool call.
-
-**What it receives (stdin):**
-```json
-{
-  "session_id": "...",
-  "tool_name": "Write",
-  "tool_input": {
-    "file_path": "/Users/you/project/config.ts",
-    "content": "const STRIPE_KEY = 'sk_live_51abc...'"
-  },
-  "tool_response": {}
-}
-```
-
-**What it does:**
-- Reads the content from `tool_input.content` (for `Write`) or reconstructs from the file path (for `Edit`)
-- Scans every line for credential patterns
-- Reports the file path and line number of any match
-- In `block` mode: annotates the result to tell Claude the write must be redacted before proceeding
-- Tracks every written file path in the session state for the final audit
-
-**Why file interception matters:**
-The most common real-world leak is an LLM writing credentials into a config file, `.env`, or TypeScript source. This hook is the last in-process safety net before the key exists on disk in the wrong place.
-
----
-
-## Hook 4: `Stop` — Session Audit
-
-**File:** `~/.claude/hooks/vg_session_audit.py`
-
-**When it fires:** When Claude Code finishes a session (the agent stops).
-
-**What it receives (stdin):**
-```json
-{
-  "session_id": "...",
-  "transcript_path": "/path/to/session/transcript.jsonl"
-}
-```
-
-**What it does:**
-- Reads the full session transcript from `transcript_path`
-- Extracts all file paths that were written or edited during the session
-- Re-scans each file for credential patterns (catches anything that slipped through)
-- Reads the session log from `~/.vaultguard.log` to compile a summary of all events
-- Prints a credential-safety summary to the terminal:
-
-```
-────────────────────────────────────────
-  VaultGuard Session Audit
-  Session: abc123   Duration: 4m 12s
-────────────────────────────────────────
-  Files written : 7
-  Scans run     : 23
-  Credentials   : 0 detected
-  Status        : CLEAN
-────────────────────────────────────────
-```
-
-If credentials were detected during the session:
-```
-  Status        : 2 CREDENTIAL EVENTS — review ~/.vaultguard.log
-```
-
----
-
-## Pattern Matching
-
-All credential patterns are defined in `config/patterns.json`:
-
-```json
-[
-  {
-    "id": "stripe_live",
-    "name": "Stripe Live Secret Key",
-    "regex": "sk_live_[0-9a-zA-Z]{24,}",
-    "severity": "critical"
-  },
-  ...
+### Step 2 — Fingerprint matching
+18 hardcoded regex patterns matched against the raw text:
+```python
+FINGERPRINTS = [
+    (r'sk_live_[A-Za-z0-9]{24,}',  'STRIPE_SECRET_KEY',  ...),
+    (r'sk-ant-api[0-9]+-...',       'ANTHROPIC_API_KEY',  ...),
+    # ... 16 more
 ]
 ```
+Used when there is no `KEY=` prefix — the key name is auto-assigned from the fingerprint database. Project routing uses the key name prefix against `~/.vaultguard.json`.
 
-The hooks load this file at runtime. You can add your own patterns without modifying any Python code.
+### Step 3 — Supabase JWT decode
+```python
+re.finditer(r'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9._-]{60,}', text)
+```
+Base64-decodes the JWT payload to read the `role` field. Auto-names as `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_ANON_KEY`.
 
-### Severity levels
+### Step 4 — Shannon entropy fallback
+```python
+def shannon_entropy(s):
+    freq = {}
+    for c in s: freq[c] = freq.get(c, 0) + 1
+    return -sum((f/len(s)) * math.log2(f/len(s)) for f in freq.values())
+```
+Only runs if steps 1–3 found nothing. Scans 32+ character tokens. Threshold:
+- Pure hex strings `[0-9a-f]+`: entropy > 3.4
+- All other strings: entropy > 3.8
 
-| Level | Behavior in `block` mode | Behavior in `warn` mode |
-|---|---|---|
-| `critical` | Hard block, annotation, log | Warning annotation, log |
-| `high` | Hard block, annotation, log | Warning annotation, log |
-| `medium` | Warning annotation, log | Log only |
-| `low` | Log only | Log only |
-
----
-
-## Session State
-
-The hooks share a lightweight session state file at `/tmp/vaultguard_<session_id>.json`. This file tracks:
-
-- Files written this session
-- Credential events detected
-- Scan count
-
-The `Stop` hook reads this file to produce the final audit summary, then removes it.
+Stored as `UNKNOWN_SECRET`.
 
 ---
 
-## Config Loading
+## Project routing
 
-Each hook resolves the config in this order:
+Each credential is routed to a Keychain service via `~/.vaultguard.json`:
 
-1. `~/.vaultguard.json` (user global config)
-2. `.vaultguard.json` in the current working directory (project-level override, if present)
-3. Built-in defaults (if neither exists)
+```
+File path match → key prefix match → default_project
+```
 
-Project-level config merges with the global config — project settings win on conflicts.
+1. If the file being written is inside a project's `dir`, that project wins
+2. If the key name starts with a project's `key_prefixes` entry, that project wins
+3. Otherwise, `default_project` is used
 
 ---
 
-## Exit Codes
+## Hook 1: `credential-scanner.sh` (UserPromptSubmit)
 
-Claude Code interprets hook exit codes as follows:
+**Exit codes:**
+- `exit 2` — credential detected → message blocked, never sent to Anthropic
+- `exit 0` — no credentials → message passes through normally
+
+**JSON input (Claude Code sends this on stdin):**
+```json
+{"prompt": "STRIPE_SECRET_KEY=sk_live_51..."}
+```
+
+**Multiline messages** arrive with literal newlines inside the JSON string (technically invalid JSON). Fixed with `json.loads(raw, strict=False)`. Falls back to scanning raw stdin if JSON parsing still fails.
+
+After blocking, Claude Code surfaces the box to the user:
+```
+╔══════════════════════════════════════╗
+║  AUTO-VAULT — INTERCEPTED            ║
+║  ✓ STRIPE_SECRET_KEY → [my-project]  ║
+║  Message blocked.                    ║
+╚══════════════════════════════════════╝
+```
+
+---
+
+## Hook 2: `output-redactor.sh` (PostToolUse: Bash)
+
+Only processes `Bash` tool calls. Scans the tool response output for credential patterns. Cannot block (PostToolUse exit 2 is not supported by Claude Code for this event) — instead:
+
+1. Stores any found credentials to Keychain
+2. Scrubs `~/.claude/history.jsonl` immediately (sed in-place)
+3. Logs the event to `~/.claude/credential-leak.log`
+
+---
+
+## Hook 3: `auto-store-secrets.sh` (PostToolUse: Write|Edit)
+
+Fires after Claude writes any file. Scans the written file's content.
+
+For `.env` files (`.env`, `.env.local`, `.env.production`, etc.) — redacts in-place:
+```
+STRIPE_SECRET_KEY=# stored-in-keychain
+```
+
+**Excluded from redaction:** `.env.template`, `.env.example`, `.env.sample`, `.envrc`, `.env.keys`
+
+For code files (`.ts`, `.py`, etc.) — stores but does NOT redact (would break syntax).
+
+---
+
+## Hook 4: `history-scrubber.sh` (Stop)
+
+Runs when the Claude Code session ends. Applies regex redaction to `~/.claude/history.jsonl`:
+
+```bash
+for pattern in "${PATTERNS[@]}"; do
+    SED_EXPR="${SED_EXPR}s|${pattern}|[REDACTED]|g;"
+done
+sed -E "$SED_EXPR" "$HISTORY" > "${HISTORY}.tmp" && mv "${HISTORY}.tmp" "$HISTORY"
+```
+
+---
+
+## Keychain storage
+
+All credentials are stored to macOS Keychain via:
+```bash
+security add-generic-password -U -s "$service" -a "$key_name" -w "$value"
+```
+
+- `-U` — update if already exists (idempotent)
+- `-s "$service"` — the Keychain service name (= project's `keychain_service` field)
+- `-a "$key_name"` — the account name (= env variable name)
+- `-w "$value"` — the password (= the secret value)
+
+Retrieve at any time:
+```bash
+security find-generic-password -s "my-project" -a "STRIPE_SECRET_KEY" -w
+```
+
+---
+
+## Exit codes (Claude Code hook system)
 
 | Code | Meaning |
 |---|---|
-| `0` | Hook ran successfully, no blocking action |
-| `1` | Hook error (logged, not blocking) |
-| `2` | Blocking action — Claude Code surfaces a warning and may halt |
+| `0` | Hook ran, no blocking action |
+| `1` | Hook error (Claude Code logs it) |
+| `2` | Block — only works in `UserPromptSubmit` |
 
-Vault Guard uses `2` only for `critical` and `high` severity matches in `block` mode.
+Only `credential-scanner.sh` uses exit `2`. All other hooks exit `0`.
+
+---
+
+## Adding credential patterns
+
+Patterns are hardcoded in the Python block inside each hook file. To add a new pattern, edit the `FINGERPRINTS` list in `~/.claude/hooks/credential-scanner.sh`:
+
+```python
+FINGERPRINTS = [
+    # ... existing patterns ...
+    (r'hf_[A-Za-z0-9]{34,}', 'HUGGINGFACE_TOKEN', 'HUGGINGFACE_TOKEN', 'HuggingFace token'),
+]
+```
+
+Note: `config/patterns.json` exists as a reference/documentation of pattern formats but is not read at runtime by the hooks.
