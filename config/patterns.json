@@ -1,0 +1,201 @@
+[
+  {
+    "id": "stripe_live",
+    "name": "Stripe Live Secret Key",
+    "regex": "sk_live_[0-9a-zA-Z]{24,}",
+    "severity": "critical",
+    "notes": "Production billing key — never expose"
+  },
+  {
+    "id": "stripe_test",
+    "name": "Stripe Test Secret Key",
+    "regex": "sk_test_[0-9a-zA-Z]{24,}",
+    "severity": "high",
+    "notes": "Downgraded to low when allow_test_keys=true"
+  },
+  {
+    "id": "stripe_restricted",
+    "name": "Stripe Restricted Key",
+    "regex": "rk_live_[0-9a-zA-Z]{24,}",
+    "severity": "high"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic API Key",
+    "regex": "sk-ant-[a-zA-Z0-9\\-_]{20,}",
+    "severity": "critical"
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter API Key",
+    "regex": "sk-or-v1-[a-zA-Z0-9]{32,}",
+    "severity": "critical"
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI API Key",
+    "regex": "sk-[a-zA-Z0-9]{20,}",
+    "severity": "critical",
+    "notes": "Broad pattern — catches any sk- key not matched by anthropic/openrouter first"
+  },
+  {
+    "id": "openai_proj",
+    "name": "OpenAI Project Key",
+    "regex": "sk-proj-[a-zA-Z0-9\\-_]{40,}",
+    "severity": "critical"
+  },
+  {
+    "id": "github_pat",
+    "name": "GitHub Personal Access Token",
+    "regex": "ghp_[a-zA-Z0-9]{36}",
+    "severity": "critical"
+  },
+  {
+    "id": "github_oauth",
+    "name": "GitHub OAuth Token",
+    "regex": "gho_[a-zA-Z0-9]{36}",
+    "severity": "critical"
+  },
+  {
+    "id": "github_app",
+    "name": "GitHub App Token",
+    "regex": "ghs_[a-zA-Z0-9]{36}",
+    "severity": "high"
+  },
+  {
+    "id": "github_user",
+    "name": "GitHub User-to-Server Token",
+    "regex": "ghu_[a-zA-Z0-9]{36}",
+    "severity": "high"
+  },
+  {
+    "id": "github_refresh",
+    "name": "GitHub Refresh Token",
+    "regex": "ghr_[a-zA-Z0-9]{36}",
+    "severity": "high"
+  },
+  {
+    "id": "gemini",
+    "name": "Google / Gemini API Key",
+    "regex": "AIza[0-9A-Za-z\\-_]{35}",
+    "severity": "critical"
+  },
+  {
+    "id": "resend",
+    "name": "Resend API Key",
+    "regex": "re_[a-zA-Z0-9]{16,}",
+    "severity": "high"
+  },
+  {
+    "id": "telnyx",
+    "name": "Telnyx API Key",
+    "regex": "KEY[0-9]{16,}",
+    "severity": "high"
+  },
+  {
+    "id": "groq",
+    "name": "Groq API Key",
+    "regex": "gsk_[a-zA-Z0-9]{40,}",
+    "severity": "critical"
+  },
+  {
+    "id": "supabase_jwt_service",
+    "name": "Supabase JWT (service role)",
+    "regex": "eyJ[a-zA-Z0-9\\-_]{100,}",
+    "severity": "critical",
+    "notes": "Service role key — full DB access"
+  },
+  {
+    "id": "supabase_anon",
+    "name": "Supabase Anon Key",
+    "regex": "eyJ[a-zA-Z0-9\\-_]{50,99}",
+    "severity": "medium",
+    "notes": "Public anon key — lower risk but still worth flagging"
+  },
+  {
+    "id": "aws_access",
+    "name": "AWS Access Key ID",
+    "regex": "AKIA[0-9A-Z]{16}",
+    "severity": "critical"
+  },
+  {
+    "id": "aws_secret",
+    "name": "AWS Secret Access Key",
+    "regex": "(?i)aws.{0,20}secret.{0,20}['\"][0-9a-zA-Z/+]{40}['\"]",
+    "severity": "critical"
+  },
+  {
+    "id": "twilio_sid",
+    "name": "Twilio Account SID",
+    "regex": "AC[a-f0-9]{32}",
+    "severity": "high"
+  },
+  {
+    "id": "twilio_token",
+    "name": "Twilio Auth Token",
+    "regex": "SK[a-f0-9]{32}",
+    "severity": "high"
+  },
+  {
+    "id": "sendgrid",
+    "name": "SendGrid API Key",
+    "regex": "SG\\.[a-zA-Z0-9\\-_]{22,}\\.[a-zA-Z0-9\\-_]{43,}",
+    "severity": "critical"
+  },
+  {
+    "id": "mailgun",
+    "name": "Mailgun API Key",
+    "regex": "key-[a-f0-9]{32}",
+    "severity": "high"
+  },
+  {
+    "id": "slack_bot",
+    "name": "Slack Bot Token",
+    "regex": "xoxb-[0-9\\-a-zA-Z]{40,}",
+    "severity": "high"
+  },
+  {
+    "id": "slack_user",
+    "name": "Slack User Token",
+    "regex": "xoxp-[0-9\\-a-zA-Z]{40,}",
+    "severity": "high"
+  },
+  {
+    "id": "slack_webhook",
+    "name": "Slack Incoming Webhook URL",
+    "regex": "https://hooks\\.slack\\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+",
+    "severity": "medium"
+  },
+  {
+    "id": "npm_token",
+    "name": "npm Publish Token",
+    "regex": "npm_[a-zA-Z0-9]{36}",
+    "severity": "high"
+  },
+  {
+    "id": "pypi_token",
+    "name": "PyPI API Token",
+    "regex": "pypi-[a-zA-Z0-9\\-_]{80,}",
+    "severity": "high"
+  },
+  {
+    "id": "digitalocean",
+    "name": "DigitalOcean Token",
+    "regex": "dop_v1_[a-f0-9]{64}",
+    "severity": "critical"
+  },
+  {
+    "id": "private_key_pem",
+    "name": "PEM Private Key",
+    "regex": "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----",
+    "severity": "critical",
+    "notes": "Any PEM private key material"
+  },
+  {
+    "id": "jwt_generic",
+    "name": "Generic JWT",
+    "regex": "eyJ[a-zA-Z0-9\\-_]+\\.[a-zA-Z0-9\\-_]+\\.[a-zA-Z0-9\\-_]+",
+    "severity": "medium",
+    "notes": "Any signed JWT token — may produce false positives in auth-heavy codebases; consider disabling"
+  }
+]

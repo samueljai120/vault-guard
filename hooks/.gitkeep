@@ -1,0 +1,4 @@
+# Hook files are installed here by install.sh.
+# Actual hook implementations (vg_prompt_scan.py, vg_bash_guard.py,
+# vg_write_intercept.py, vg_session_audit.py) live in this directory
+# in the full release.

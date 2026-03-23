@@ -1,0 +1,23 @@
+# Personal config — never commit your credential config
+.vaultguard.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo

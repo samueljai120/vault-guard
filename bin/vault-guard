@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# vault-guard — CLS Vault Guard CLI
+# List, get, add, and delete credentials from the Keychain.
+# Uses ~/.vaultguard.json for project routing.
+
+set -euo pipefail
+
+CONFIG="$HOME/.vaultguard.json"
+HOOKS_DIR="$HOME/.claude/hooks"
+
+usage() {
+    cat <<EOF
+vault-guard — CLS Vault Guard CLI
+
+COMMANDS:
+  list [project]          List stored keys (optionally filtered by project)
+  get <project> <key>     Retrieve a credential value
+  set <project> <key>     Store a credential (prompts for value)
+  del <project> <key>     Delete a credential
+  projects                List configured projects
+  init                    Initialize a new ~/.vaultguard.json interactively
+  status                  Show hook installation status
+  test                    Run a quick credential detection self-test
+
+EXAMPLES:
+  vault-guard list
+  vault-guard list cls-booking-prod
+  vault-guard get cls-corp ANTHROPIC_API_KEY
+  vault-guard set cls-corp MY_API_KEY
+  vault-guard del cls-corp OLD_KEY
+  vault-guard projects
+  vault-guard status
+
+EOF
+}
+
+# Load config helpers
+get_service() {
+    local project_id="$1"
+    python3 -c "
+import json, os
+try:
+    cfg = json.load(open(os.path.expanduser('$CONFIG')))
+    for p in cfg.get('projects', []):
+        if p['id'] == '$project_id':
+            print(p.get('keychain_service', '$project_id'))
+            exit()
+    print('$project_id')
+except:
+    print('$project_id')
+"
+}
+
+list_projects() {
+    python3 -c "
+import json, os
+try:
+    cfg = json.load(open(os.path.expanduser('$CONFIG')))
+    print(f\"{'ID':<20} {'NAME':<30} {'KEYCHAIN SERVICE'}\")
+    print('-' * 72)
+    for p in cfg.get('projects', []):
+        print(f\"{p['id']:<20} {p.get('name',''):<30} {p.get('keychain_service', p['id'])}\")
+    print(f\"\\nDefault: {cfg.get('default_project','vault-guard')}\")
+except Exception as e:
+    print(f'Error reading {os.path.expanduser(\"$CONFIG\")}: {e}')
+    exit(1)
+"
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    list)
+        project="${1:-}"
+        if [ -n "$project" ]; then
+            service=$(get_service "$project")
+            echo "Keys in [$service]:"
+            security dump-keychain 2>/dev/null \
+                | awk -F'"' '/svce/{svc=$4} /acct/{acc=$4} svc~/'"$service"'/ && acc{print "  " acc; acc=""}' \
+                | sort -u
+        else
+            python3 -c "
+import json, os, subprocess
+try:
+    cfg = json.load(open(os.path.expanduser('$CONFIG')))
+    for p in cfg.get('projects', []):
+        svc = p.get('keychain_service', p['id'])
+        print(f\"\\n[{svc}] — {p.get('name','')}\")
+        result = subprocess.run(['security','dump-keychain'], capture_output=True, text=True)
+        lines = result.stdout.split('\\n')
+        cur_svc = ''
+        for line in lines:
+            if 'svce' in line and '\"' in line:
+                cur_svc = line.split('\"')[3] if line.count('\"') >= 4 else ''
+            if cur_svc == svc and 'acct' in line and '\"' in line:
+                key = line.split('\"')[3] if line.count('\"') >= 4 else ''
+                if key: print(f'  {key}')
+except Exception as e:
+    print(f'Error: {e}')
+"
+        fi
+        ;;
+
+    get)
+        [ $# -lt 2 ] && echo "Usage: vault-guard get <project> <key>" && exit 1
+        project="$1"; key="$2"
+        service=$(get_service "$project")
+        security find-generic-password -s "$service" -a "$key" -w 2>/dev/null || echo "(not found)"
+        ;;
+
+    set)
+        [ $# -lt 2 ] && echo "Usage: vault-guard set <project> <key>" && exit 1
+        project="$1"; key="$2"
+        service=$(get_service "$project")
+        printf "Value for %s (input hidden): " "$key"
+        read -rs value; echo
+        [ -z "$value" ] && echo "Aborted — empty value." && exit 1
+        if security add-generic-password -U -s "$service" -a "$key" -w "$value" 2>/dev/null; then
+            echo "✓ Stored: $key → [$service]"
+        else
+            echo "✗ Failed to store — Keychain denied."
+            exit 1
+        fi
+        ;;
+
+    del)
+        [ $# -lt 2 ] && echo "Usage: vault-guard del <project> <key>" && exit 1
+        project="$1"; key="$2"
+        service=$(get_service "$project")
+        if security delete-generic-password -s "$service" -a "$key" 2>/dev/null; then
+            echo "✓ Deleted: $key from [$service]"
+        else
+            echo "Key not found: $key in [$service]"
+        fi
+        ;;
+
+    projects)
+        list_projects
+        ;;
+
+    status)
+        echo "=== CLS Vault Guard Status ==="
+        echo ""
+        echo "Config: $CONFIG"
+        [ -f "$CONFIG" ] && echo "  ✓ Found" || echo "  ✗ Missing — run: vault-guard init"
+        echo ""
+        echo "Hooks ($HOOKS_DIR):"
+        for hook in credential-scanner.sh auto-store-secrets.sh output-redactor.sh history-scrubber.sh; do
+            [ -f "$HOOKS_DIR/$hook" ] && echo "  ✓ $hook" || echo "  ✗ $hook (missing)"
+        done
+        echo ""
+        echo "Claude Code settings:"
+        SETTINGS="$HOME/.claude/settings.local.json"
+        [ -f "$SETTINGS" ] && python3 -c "
+import json
+cfg = json.load(open('$SETTINGS'))
+hooks = cfg.get('hooks', {})
+print(f'  UserPromptSubmit: {\"✓\" if \"UserPromptSubmit\" in hooks else \"✗ not configured\"}'  )
+print(f'  PostToolUse:      {\"✓\" if \"PostToolUse\" in hooks else \"✗ not configured\"}'  )
+print(f'  Stop:             {\"✓\" if \"Stop\" in hooks else \"✗ not configured\"}'  )
+" || echo "  ✗ $SETTINGS not found"
+        ;;
+
+    test)
+        echo "=== CLS Vault Guard Self-Test ==="
+        echo ""
+        TMPFILE=$(mktemp /tmp/vaultguard-test-XXXXXX)
+        trap 'rm -f "$TMPFILE"' EXIT
+        # Write a fake key in KEY=value format
+        echo "TEST_FAKE_KEY=sk_test_AbCdEfGhIjKlMnOpQrStUvWxYz1234" > "$TMPFILE"
+        echo "Input: $(cat "$TMPFILE")"
+        echo ""
+        echo "Running credential-scanner detection..."
+        result=$(python3 - "$TMPFILE" "$CONFIG" <<'PYEOF'
+import re, sys, json, os
+
+def load_vaultguard_config(p):
+    try:
+        with open(os.path.expanduser(p)) as f:
+            cfg = json.load(f)
+        return cfg.get('projects', []), cfg.get('default_project', 'vault-guard')
+    except:
+        return [], 'vault-guard'
+
+with open(sys.argv[1]) as f:
+    text = f.read()
+
+projects, default_id = load_vaultguard_config(sys.argv[2])
+
+m = re.search(r'sk_test_[A-Za-z0-9]{24,}', text)
+kv = re.search(r'^([A-Z][A-Z0-9_]{2,})\s*=\s*([^\s#\n]{8,})', text, re.MULTILINE)
+
+if m:
+    print(f"✓ Raw pattern matched: {m.group(0)[:20]}...")
+if kv:
+    print(f"✓ KEY=value matched: {kv.group(1)} = {kv.group(2)[:20]}...")
+print(f"✓ Config loaded: {len(projects)} project(s)")
+print(f"✓ Default project: {default_id}")
+PYEOF
+)
+        echo "$result"
+        echo ""
+        echo "Self-test complete."
+        ;;
+
+    init)
+        VAULT_GUARD_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+        bash "$VAULT_GUARD_DIR/install.sh"
+        ;;
+
+    help|--help|-h)
+        usage
+        ;;
+
+    *)
+        echo "Unknown command: $cmd"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac
