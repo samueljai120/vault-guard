@@ -16,6 +16,9 @@ __pycache__/
 *.log
 logs/
 
+# Drafts (personal, not for public repo)
+drafts/
+
 # Editor artifacts
 .vscode/
 .idea/
