@@ -98,6 +98,10 @@ FINGERPRINTS = [
     (r'KEY[0-9A-F]{16,}_[A-Za-z0-9_-]{10,}',  'TELNYX_API_KEY',               'TELNYX_API_KEY',                'Telnyx API key'),
     # Voice AI
     (r'gsk_[A-Za-z0-9]{40,}',                 'GROQ_API_KEY',                  'GROQ_API_KEY',                  'Groq API key'),
+    (r'sk_car_[A-Za-z0-9]{20,}',              'CARTESIA_API_KEY',              'CARTESIA_API_KEY',              'Cartesia API key'),
+    (r'sk_[A-Za-z0-9]{48,}',                  'ELEVENLABS_API_KEY',            'ELEVENLABS_API_KEY',            'ElevenLabs API key'),
+    # Deepgram / hex-based keys
+    (r'dg\.[A-Za-z0-9_-]{30,}',               'DEEPGRAM_API_KEY',              'DEEPGRAM_API_KEY',              'Deepgram API key (dg. prefix)'),
 ]
 
 NON_SECRETS = {
@@ -166,6 +170,8 @@ for m in re.finditer(
         found[key_name] = (token, matched_id, f'Supabase JWT (role={role})')
 
 # Step 4: High-entropy unknown strings
+# Pure hex strings (0-9a-f only) have max entropy 4.0 but cluster around 3.5 in practice.
+# Use a lower threshold for hex-only tokens to catch service keys like Deepgram, VOICE_API_SECRET.
 if not found:
     candidates = re.findall(
         r'(?:=|:\s*|^|\s)["\']?([A-Za-z0-9+/=_\-\.]{32,})["\']?', text
@@ -173,7 +179,10 @@ if not found:
     SKIP = ['price_','prod_','example','placeholder','localhost','REDACTED','acct_']
     for token in candidates:
         if any(s in token for s in SKIP): continue
-        if shannon_entropy(token) > 3.8:
+        e = shannon_entropy(token)
+        is_hex = bool(re.fullmatch(r'[0-9a-f]+', token))
+        threshold = 3.4 if is_hex else 3.8
+        if e > threshold:
             found['UNKNOWN_SECRET'] = (
                 token, default_id,
                 f'high-entropy token ({shannon_entropy(token):.1f} bits)'

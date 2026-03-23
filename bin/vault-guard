@@ -13,14 +13,16 @@ usage() {
 vault-guard — CLS Vault Guard CLI
 
 COMMANDS:
-  list [project]          List stored keys (optionally filtered by project)
-  get <project> <key>     Retrieve a credential value
-  set <project> <key>     Store a credential (prompts for value)
-  del <project> <key>     Delete a credential
-  projects                List configured projects
-  init                    Initialize a new ~/.vaultguard.json interactively
-  status                  Show hook installation status
-  test                    Run a quick credential detection self-test
+  list [project]              List stored keys (optionally filtered by project)
+  get <project> <key>         Retrieve a credential value
+  set <project> <key>         Store a credential (prompts for value)
+  del <project> <key>         Delete a credential
+  import <project> <file>     Import all credentials from a .env file → Keychain
+  run <project> <cmd...>      Run a command with project secrets injected into env
+  projects                    List configured projects
+  status                      Show hook installation status
+  test                        Run a quick credential detection self-test
+  init                        Initialize a new ~/.vaultguard.json interactively
 
 EXAMPLES:
   vault-guard list
@@ -28,6 +30,8 @@ EXAMPLES:
   vault-guard get cls-corp ANTHROPIC_API_KEY
   vault-guard set cls-corp MY_API_KEY
   vault-guard del cls-corp OLD_KEY
+  vault-guard import cls-booking-prod .env
+  vault-guard run cls-corp node server.js
   vault-guard projects
   vault-guard status
 
@@ -39,15 +43,16 @@ get_service() {
     local project_id="$1"
     python3 -c "
 import json, os
+result = '$project_id'
 try:
     cfg = json.load(open(os.path.expanduser('$CONFIG')))
     for p in cfg.get('projects', []):
         if p['id'] == '$project_id':
-            print(p.get('keychain_service', '$project_id'))
-            exit()
-    print('$project_id')
-except:
-    print('$project_id')
+            result = p.get('keychain_service', '$project_id')
+            break
+except Exception:
+    pass
+print(result)
 "
 }
 
@@ -202,6 +207,91 @@ PYEOF
         echo "$result"
         echo ""
         echo "Self-test complete."
+        ;;
+
+    import)
+        [ $# -lt 2 ] && echo "Usage: vault-guard import <project> <file>" && exit 1
+        project="$1"; file="$2"
+        [ ! -f "$file" ] && echo "File not found: $file" && exit 1
+        service=$(get_service "$project")
+        echo "Importing from $file → [$service]"
+        echo ""
+        STORED=0; SKIPPED=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Strip comments and blank lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// }" ]] && continue
+            # Parse KEY=value
+            if [[ "$line" =~ ^[[:space:]]*([A-Z][A-Z0-9_]{2,})[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                val="${BASH_REMATCH[2]}"
+                # Strip surrounding quotes
+                val="${val#\"}" && val="${val%\"}"
+                val="${val#\'}" && val="${val%\'}"
+                # Skip placeholders, URLs, short numerics, empty
+                [[ -z "$val" ]] && continue
+                lower="${val,,}"
+                [[ "$lower" == "your_key_here" || "$lower" == "placeholder" || "$lower" == "stored-in-keychain" ]] && continue
+                [[ "$val" == *"keychain"* ]] && continue
+                [[ "$val" =~ ^[[:digit:]]{1,5}$ ]] && continue
+                [[ "$val" =~ ^(https?|postgres(ql)?|redis|mysql|mongodb|amqp|smtp|ftp|s3):// ]] && continue
+                [[ "${#val}" -lt 8 ]] && continue
+
+                if security add-generic-password -U -s "$service" -a "$key" -w "$val" 2>/dev/null; then
+                    echo "  ✓ $key"
+                    ((STORED++)) || true
+                else
+                    echo "  ✗ $key  (Keychain denied)"
+                    ((SKIPPED++)) || true
+                fi
+            fi
+        done < "$file"
+        echo ""
+        echo "Done: $STORED stored, $SKIPPED failed."
+        echo ""
+        echo "To verify: vault-guard list $project"
+        ;;
+
+    run)
+        [ $# -lt 2 ] && echo "Usage: vault-guard run <project> <command...>" && exit 1
+        project="$1"; shift
+        service=$(get_service "$project")
+        # Load all keys for this project from Keychain into env
+        eval "$(python3 -c "
+import subprocess, json, os
+
+config_path = os.path.expanduser('$CONFIG')
+service = '$service'
+
+try:
+    cfg = json.load(open(config_path))
+except:
+    exit(0)
+
+# Find the project's .env.keys file for the key list
+proj_dir = ''
+for p in cfg.get('projects', []):
+    if p.get('keychain_service') == service or p.get('id') == '$project':
+        proj_dir = os.path.expanduser(p.get('dir', ''))
+        break
+
+keys_file = os.path.join(proj_dir, '.env.keys') if proj_dir else ''
+
+keys = []
+if keys_file and os.path.isfile(keys_file):
+    with open(keys_file) as f:
+        keys = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+
+for key in keys:
+    r = subprocess.run(
+        ['security', 'find-generic-password', '-s', service, '-a', key, '-w'],
+        capture_output=True, text=True
+    )
+    if r.returncode == 0:
+        val = r.stdout.strip().replace(\"'\", \"'\\\\''\" )
+        print(f\"export {key}='{val}'\")
+")"
+        exec "$@"
         ;;
 
     init)
