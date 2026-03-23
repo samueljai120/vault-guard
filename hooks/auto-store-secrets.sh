@@ -26,7 +26,7 @@ done
 IS_ENV_FILE=false
 fname=$(basename "$FILE_PATH")
 if [[ "$fname" == .env* || "$fname" == *.env || "$fname" == *.env.* ]]; then
-    [[ "$fname" != ".envrc" && "$fname" != ".env.keys" && "$fname" != ".env.template" ]] && IS_ENV_FILE=true
+    [[ "$fname" != ".envrc" && "$fname" != *.keys && "$fname" != *.template && "$fname" != *.example && "$fname" != *.sample ]] && IS_ENV_FILE=true
 fi
 
 # --- Smart credential extraction + project routing via ~/.vaultguard.json ---
