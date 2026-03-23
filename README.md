@@ -148,6 +148,8 @@ vault-guard list my-app                   # list keys for one project
 vault-guard get my-app STRIPE_SECRET_KEY  # retrieve a value
 vault-guard set my-app MY_KEY             # store a value (prompts, input hidden)
 vault-guard del my-app OLD_KEY            # delete a key
+vault-guard import my-app .env            # bulk-import an existing .env file → Keychain
+vault-guard run my-app node server.js     # run a command with project secrets in env
 vault-guard projects                      # list configured projects
 vault-guard status                        # check hook installation health
 vault-guard test                          # run a quick self-test
@@ -173,11 +175,37 @@ export STRIPE_SECRET_KEY=$(security find-generic-password -s "my-app" -a "STRIPE
 
 ---
 
+## Migrating existing `.env` files
+
+If you have credentials already sitting in `.env` files, import them in one command:
+
+```bash
+vault-guard import my-app .env
+```
+
+This reads every `KEY=value` line, stores each credential to Keychain, and skips URLs, comments, placeholders, and short values.
+
+---
+
+## Running commands with secrets injected
+
+Instead of sourcing `.env` files directly, use `vault-guard run` to inject credentials into a subprocess without exposing them in shell history:
+
+```bash
+vault-guard run my-app node server.js
+vault-guard run my-app python manage.py migrate
+vault-guard run my-app npm run dev
+```
+
+Secrets are exported into the child process's environment and do not persist in your shell session.
+
+---
+
 ## What is NOT protected
 
-- **Codex CLI** — Claude Code hooks don't apply to other AI tools. Use a shell-level wrapper.
-- **Raw hex/UUID values without KEY= prefix** — e.g., `d2d7c181...` has no detectable pattern. Always use `KEY=value` format for unrecognized secrets.
-- **Credentials already in `.env` files** — the hook only fires on new writes. Run `vault-guard set` to manually migrate existing keys.
+- **Codex CLI and other AI tools** — Claude Code hooks only fire inside Claude Code. For other tools, use `vault-guard run <project> <cmd>` to ensure secrets are injected from Keychain rather than from `.env` files.
+- **Raw hex values without `KEY=` prefix** — 32-char hex strings (e.g., `92791e77...`) are caught if their entropy exceeds 3.4 bits/char. Longer hex keys (40+ chars) are caught more reliably. When in doubt, use `KEY=value` format.
+- **Non-macOS systems** — storage uses macOS Keychain. Linux users can adapt the hooks to use `secret-tool` (GNOME Keyring) or `pass`.
 
 ---
 
