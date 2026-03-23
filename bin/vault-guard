@@ -82,7 +82,7 @@ case "$cmd" in
             service=$(get_service "$project")
             echo "Keys in [$service]:"
             security dump-keychain 2>/dev/null \
-                | awk -F'"' '/svce/{svc=$4} /acct/{acc=$4} svc~/'"$service"'/ && acc{print "  " acc; acc=""}' \
+                | awk -F'"' -v target="$service" '/svce/{svc=$4} /acct/{acc=$4} svc~target && acc{print "  " acc; acc=""}' \
                 | sort -u
         else
             python3 -c "

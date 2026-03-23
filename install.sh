@@ -67,7 +67,8 @@ fi
 
 # ── 5. Add ~/bin to PATH in ~/.zshrc ─────────────────────────────────────────
 ZSHRC="$HOME/.zshrc"
-if [ -f "$ZSHRC" ] && grep -qF 'HOME/bin' "$ZSHRC"; then
+[ ! -f "$ZSHRC" ] && touch "$ZSHRC"
+if grep -qF 'HOME/bin' "$ZSHRC"; then
   echo -e "${CYAN}  [=] ~/bin already in PATH ($ZSHRC)${RESET}"
 else
   echo "" >> "$ZSHRC"

@@ -99,6 +99,9 @@ FINGERPRINTS = [
     (r're_[A-Za-z0-9]{20,}',                  'RESEND_API_KEY'),
     (r'KEY[0-9A-F]{16,}_[A-Za-z0-9_-]{10,}',  'TELNYX_API_KEY'),
     (r'gsk_[A-Za-z0-9]{40,}',                 'GROQ_API_KEY'),
+    (r'sk_car_[A-Za-z0-9]{20,}',              'CARTESIA_API_KEY'),
+    (r'sk_[A-Za-z0-9]{48,}',                  'ELEVENLABS_API_KEY'),
+    (r'dg\.[A-Za-z0-9_-]{30,}',               'DEEPGRAM_API_KEY'),
 ]
 
 NON_SECRETS = {'true','false','null','none','undefined','development','production',

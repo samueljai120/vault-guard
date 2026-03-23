@@ -107,7 +107,16 @@ for bin_cmd in vault-guard vg; do
   fi
 done
 
-# ── 4. Note about config ──────────────────────────────────────────────────────
+# ── 4. Clean ~/.zshrc PATH export ──────────────────────────────────────────────
+ZSHRC="$HOME/.zshrc"
+if [ -f "$ZSHRC" ] && grep -qF "# Added by CLS Vault Guard" "$ZSHRC"; then
+  sed -i '' '/# Added by CLS Vault Guard/d;/export PATH="\$HOME\/bin:\$PATH"/d' "$ZSHRC" 2>/dev/null
+  # Remove trailing blank lines left behind
+  sed -i '' -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$ZSHRC" 2>/dev/null
+  echo -e "${GREEN}  [−] Removed PATH export from $ZSHRC${RESET}"
+fi
+
+# ── 5. Note about config ──────────────────────────────────────────────────────
 echo ""
 if [ -f "$VAULTGUARD_CONFIG" ]; then
   echo -e "${YELLOW}  [i] $VAULTGUARD_CONFIG was left intact.${RESET}"

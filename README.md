@@ -227,22 +227,25 @@ Detection pipeline (runs in Python, inside each hook):
 1. `KEY=value` regex scan — highest priority, captures explicit key names
 2. Fingerprint matching — 18 known credential patterns
 3. Supabase JWT decode — base64 payload → role → auto-named
-4. Shannon entropy fallback — strings > 3.8 bits flagged as `UNKNOWN_SECRET`
+4. Shannon entropy fallback — hex strings > 3.4 bits, others > 3.8 bits, flagged as `UNKNOWN_SECRET`
 
 ---
 
 ## Contributing
 
-To add a new credential pattern: edit `config/patterns.json` and open a PR.
+To add a new credential pattern, edit the `FINGERPRINTS` list in **all four hook scripts** and open a PR:
 
-```json
-{
-  "id": "my_service",
-  "label": "My Service API key",
-  "pattern": "ms_[A-Za-z0-9]{32,}",
-  "key_name": "MY_SERVICE_API_KEY"
-}
+1. `hooks/credential-scanner.sh` — add the pattern tuple
+2. `hooks/auto-store-secrets.sh` — add the same pattern
+3. `hooks/output-redactor.sh` — add to the PATTERNS bash array
+4. `hooks/history-scrubber.sh` — add to the PATTERNS bash array
+
+```python
+# Example (add to credential-scanner.sh and auto-store-secrets.sh):
+(r'ms_[A-Za-z0-9]{32,}', 'MY_SERVICE_API_KEY', 'MY_SERVICE_API_KEY', 'My Service key'),
 ```
+
+Note: `config/patterns.json` is a reference document only — it is **not loaded at runtime**.
 
 ---
 

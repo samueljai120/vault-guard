@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+# Fail-closed: if python3 is missing, block everything (exit 2)
+command -v python3 >/dev/null 2>&1 || { echo "[vault-guard] python3 required — blocking message for safety" >&2; exit 2; }
+
 INPUT=$(cat)
 PROMPT=$(echo "$INPUT" | python3 -c "
 import sys, json, re
@@ -29,6 +32,7 @@ trap 'rm -f "$TMPFILE"' EXIT
 printf '%s' "$PROMPT" > "$TMPFILE"
 
 # ── Smart detection + auto-store ──────────────────────────────────────────────
+# Fail-closed: if Python detection fails, block rather than leak
 DETECTIONS=$(python3 - "$TMPFILE" "$HOME/.vaultguard.json" <<'PYEOF'
 import re, sys, base64, json, math, os
 
@@ -196,7 +200,7 @@ for key_name, (val, project_id, label) in found.items():
     safe = val.replace('\\', '\\\\').replace('|', '\\|')
     print(f"STORE|{key_name}|{safe}|{service}|{label}|{proj_dir}")
 PYEOF
-)
+) || { echo "[vault-guard] Detection engine failed — blocking for safety" >&2; exit 2; }
 
 [ -z "$DETECTIONS" ] && exit 0
 
@@ -221,7 +225,8 @@ while IFS='|' read -r action key_name value service label proj_dir; do
     fi
 done <<< "$DETECTIONS"
 
-[ ${#STORED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && exit 0
+# Fail-closed: if Python detected something but bash couldn't parse it, still block
+[ ${#STORED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && { echo "[vault-guard] Credential detected but storage failed — blocking for safety" >&2; exit 2; }
 
 # ── Print result box ──────────────────────────────────────────────────────────
 W=66

@@ -19,7 +19,7 @@ Vault Guard detects credentials using 18 hardcoded fingerprints in the hook scri
 | OpenAI (project) | `sk-proj-` | `OPENAI_API_KEY` | Project-scoped OpenAI key |
 | GitHub PAT (classic) | `ghp_` | `GITHUB_TOKEN` | Full repo/account access |
 | GitHub OAuth | `gho_` | `GITHUB_OAUTH_TOKEN` | OAuth app token |
-| Google / Gemini | `AIzaSy` | `GOOGLE_API_KEY` | Google Cloud + Gemini |
+| Google / Gemini | `AIzaSy` | `GEMINI_API_KEY` | Google Cloud + Gemini |
 | Resend | `re_` | `RESEND_API_KEY` | Email sending |
 | Telnyx | `KEY` + hex | `TELNYX_API_KEY` | Voice/SMS API |
 | Groq | `gsk_` | `GROQ_API_KEY` | Groq LLM inference |

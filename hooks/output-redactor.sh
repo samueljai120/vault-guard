@@ -48,6 +48,9 @@ PATTERNS=(
     "gsk_[A-Za-z0-9]{40,}"
     "rk_live_[A-Za-z0-9]{24,}"
     "github_pat_[A-Za-z0-9_]{80,}"
+    "sk_car_[A-Za-z0-9]{20,}"
+    "sk_[A-Za-z0-9]{48,}"
+    "dg\.[A-Za-z0-9_-]{30,}"
 )
 
 LEAKED=0
