@@ -9,7 +9,7 @@ INPUT=$(cat)
 TOOL=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(sys.stdin.read(), strict=False)
     print(d.get('tool_name', '') or d.get('tool', ''))
 except: print('')
 " 2>/dev/null || true)
@@ -19,7 +19,7 @@ except: print('')
 OUTPUT=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(sys.stdin.read(), strict=False)
     r = d.get('tool_response', {}) or d.get('result', {}) or d.get('output', {})
     if isinstance(r, dict):
         print(r.get('output', '') or r.get('stdout', '') or r.get('content', ''))

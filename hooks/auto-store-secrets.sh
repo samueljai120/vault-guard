@@ -10,7 +10,7 @@ INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(sys.stdin.read(), strict=False)
     print(d.get('tool_input',{}).get('file_path','') or d.get('tool_input',{}).get('path',''))
 except: print('')
 " 2>/dev/null || true)

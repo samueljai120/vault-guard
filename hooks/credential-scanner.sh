@@ -11,12 +11,14 @@ set -euo pipefail
 
 INPUT=$(cat)
 PROMPT=$(echo "$INPUT" | python3 -c "
-import sys, json
+import sys, json, re
+raw = sys.stdin.read()
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(raw, strict=False)
     print(d.get('prompt','') or d.get('message','') or d.get('content',''))
 except:
-    print('')
+    # Fallback: scan raw input directly (handles non-JSON or malformed payloads)
+    print(raw)
 " 2>/dev/null || true)
 
 [ -z "$PROMPT" ] && exit 0
