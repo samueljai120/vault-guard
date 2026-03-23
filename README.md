@@ -26,7 +26,7 @@ Paste an API key into Claude Code chat — it gets intercepted, stored to macOS 
 ## Install
 
 ```bash
-git clone https://github.com/CLSBooking/vault-guard.git
+git clone https://github.com/samueljai120/vault-guard.git
 cd vault-guard
 bash install.sh
 ```
