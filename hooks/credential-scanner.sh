@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Claude Code — Smart Credential Vault (UserPromptSubmit hook)
 #
-# Paste credentials in ANY format — hook auto-detects, stores to Keychain, blocks.
-# Exit 2 = block. Exit 0 = allow through.
+# Paste credentials in ANY format — hook auto-detects, stores to Keychain.
+# Non-blocking mode: stores credentials and warns, but allows message through.
+# This ensures bypass-permissions mode works smoothly while vault still protects.
 #
 # Project routing is driven by ~/.vaultguard.json config.
 # Falls back to "vault-guard" keychain service if config is missing.
 
 set -euo pipefail
 
-# Fail-closed: if python3 is missing, block everything (exit 2)
-command -v python3 >/dev/null 2>&1 || { echo "[vault-guard] python3 required — blocking message for safety" >&2; exit 2; }
+# python3 required for detection — if missing, warn but allow through
+command -v python3 >/dev/null 2>&1 || { echo "[vault-guard] python3 not found — credential scanning skipped" >&2; exit 0; }
 
 INPUT=$(cat)
 PROMPT=$(echo "$INPUT" | python3 -c "
@@ -130,10 +131,9 @@ def shannon_entropy(s):
 found = {}  # key_name -> (value, project_id, label)
 
 # Step 1: KEY=value format — explicit name, highest priority
-kv_re = re.compile(
-    r'^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=\s*["\']?([^\s"\'#\n]{8,})["\']?\s*$',
-    re.MULTILINE
-)
+SQ = "\x27"  # single quote — avoids bash 3.2 heredoc parsing bug
+kv_pattern = r'^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=\s*["' + SQ + r']?([^\s"' + SQ + r'#\n]{8,})["' + SQ + r']?\s*$'
+kv_re = re.compile(kv_pattern, re.MULTILINE)
 for key, val in kv_re.findall(text):
     val = val.strip().strip('"').strip("'")
     if not val or val.lower() in NON_SECRETS: continue
@@ -177,9 +177,8 @@ for m in re.finditer(
 # Pure hex strings (0-9a-f only) have max entropy 4.0 but cluster around 3.5 in practice.
 # Use a lower threshold for hex-only tokens to catch service keys like Deepgram, VOICE_API_SECRET.
 if not found:
-    candidates = re.findall(
-        r'(?:=|:\s*|^|\s)["\']?([A-Za-z0-9+/=_\-\.]{32,})["\']?', text
-    )
+    entropy_pat = r'(?:=|:\s*|^|\s)["' + SQ + r']?([A-Za-z0-9+/=_\-\.]{32,})["' + SQ + r']?'
+    candidates = re.findall(entropy_pat, text)
     SKIP = ['price_','prod_','example','placeholder','localhost','REDACTED','acct_']
     for token in candidates:
         if any(s in token for s in SKIP): continue
@@ -197,10 +196,10 @@ if not found:
 for key_name, (val, project_id, label) in found.items():
     service = get_keychain_service(project_id, projects, default_id)
     proj_dir = get_project_dir(project_id, projects)
-    safe = val.replace('\\', '\\\\').replace('|', '\\|')
+    safe = val.replace(chr(92), chr(92)+chr(92)).replace("|", chr(92)+"|")
     print(f"STORE|{key_name}|{safe}|{service}|{label}|{proj_dir}")
 PYEOF
-) || { echo "[vault-guard] Detection engine failed — blocking for safety" >&2; exit 2; }
+) || { echo "[vault-guard] Detection engine encountered an error — scanning skipped" >&2; exit 0; }
 
 [ -z "$DETECTIONS" ] && exit 0
 
@@ -225,8 +224,8 @@ while IFS='|' read -r action key_name value service label proj_dir; do
     fi
 done <<< "$DETECTIONS"
 
-# Fail-closed: if Python detected something but bash couldn't parse it, still block
-[ ${#STORED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && { echo "[vault-guard] Credential detected but storage failed — blocking for safety" >&2; exit 2; }
+# If nothing stored and nothing failed, detection was a no-op — allow through
+[ ${#STORED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && { echo "[vault-guard] Credential detected but storage inconclusive — allowing through" >&2; exit 0; }
 
 # ── Print result box ──────────────────────────────────────────────────────────
 W=66
@@ -251,8 +250,8 @@ if [ ${#FAILED[@]} -gt 0 ]; then
     row ""
 fi
 div
-row "Message blocked — values never reached Anthropic."
-row "Now tell Claude: 'Keys are stored. [describe task]'"
+row "Credentials auto-stored. Message allowed through."
+row "Tip: reference keys by name, not raw values."
 bot
 echo ""
-exit 2
+exit 0

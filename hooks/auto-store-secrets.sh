@@ -110,7 +110,8 @@ NON_SECRETS = {'true','false','null','none','undefined','development','productio
 found = {}
 
 # KEY=value (explicit name wins)
-kv = re.compile(r'^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=\s*["\']?([^\s"\'#\n]{8,})["\']?', re.MULTILINE)
+SQ = "\x27"  # single quote — avoids bash 3.2 heredoc parsing bug with backslash-quote
+kv = re.compile(r'^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=\s*["' + SQ + r']?([^\s"' + SQ + r'#\n]{8,})["' + SQ + r']?', re.MULTILINE)
 for key, val in kv.findall(content):
     val = val.strip().strip('"').strip("'")
     if not val or val.lower() in NON_SECRETS: continue
@@ -145,7 +146,7 @@ for m in re.finditer(r'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9._-]{60,}
 for key_name, (val, project_id, source) in found.items():
     service = get_keychain_service(project_id, projects, default_id)
     proj_dir = get_project_dir(project_id, projects)
-    safe = val.replace('\\', '\\\\').replace('|', '\\|')
+    safe = val.replace(chr(92), chr(92)+chr(92)).replace("|", chr(92)+"|")
     print(f"STORE|{key_name}|{safe}|{service}|{source}|{proj_dir}")
 PYEOF
 )
